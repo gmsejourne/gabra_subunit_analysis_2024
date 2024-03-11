@@ -22,6 +22,7 @@ if(!require("pheatmap")){BiocManager::install("pheatmap")}
 if(!require("RColorBrewer")){BiocManager::install("RColorBrewer")}
 if(!require("EnhancedVolcano")){BiocManager::install('EnhancedVolcano')}
 if(!require("xlsx")){BiocManager::install('xlsx')}
+if(!require("tidyverse")){BiocManager::install('tidyverse')}
 
 # import libraries
 library(clusterProfiler)
@@ -39,6 +40,7 @@ library(pheatmap)
 library(RColorBrewer)
 library(EnhancedVolcano)
 library(xlsx)
+library(tidyverse)
 ```
 
 ```{r data}
@@ -46,47 +48,112 @@ pcutoff = 0.05
 FCcutoff = 1.5
 
 # WT ezrin data
-WTData <- read.csv("10003_Ezrin-BioID-Quant-WT-CYTO-vs-EZR_011923.csv")
-keep <- !is.na(rownames(WTData))
-WTData <- WTData[keep,]
-WTData <- WTData[!WTData$Symbol == '2 SV' & !WTData$Symbol == '1 SV' & !WTData$Symbol == 'Macf1',]
-WTData$log2_WT_EZR_v_WT_CYT_FC <- ((abs(WTData$WT_EZR_v_WT_CYT_FC))/WTData$WT_EZR_v_WT_CYT_FC) * log(abs(WTData$WT_EZR_v_WT_CYT_FC), base = 2)
-rownames(WTData) <- WTData$Symbol
+EzrinData <- read.csv("./tables/10003_Ezrin-BioID-Quant-WT-CYTO-vs-EZR_011923.csv")
+keep <- !is.na(rownames(Nlgn2Data))
+EzrinData <- EzrinData[keep,]
+EzrinData <- EzrinData[!(duplicated(EzrinData$Symbol)) & !(is.na(EzrinData$Symbol)),]
+EzrinData$log2_WT_EZR_v_WT_CYT_FC <- ((abs(EzrinData$WT_EZR_v_WT_CYT_FC))/EzrinData$WT_EZR_v_WT_CYT_FC) * log(abs(EzrinData$WT_EZR_v_WT_CYT_pval), base = 2)
+rownames(EzrinData) <- EzrinData$Symbol
+EzrinData$Genes <- EzrinData$Symbol
 
 # Astro Nlgn2 data
+Nlgn2Data <- read_excel("./tables/Neuroligin2_astrocyte_BioID_RawData.xlsx", sheet = "Table 4 NL2_v_Turbo")
+keep <- !is.na(rownames(Nlgn2Data))
+Nlgn2Data <- Nlgn2Data[keep,]
+Nlgn2Data <- Nlgn2Data[!(duplicated(Nlgn2Data$Genes)) & !(is.na(Nlgn2Data$Genes)),]
+Nlgn2Data$log2_NL2_v_Turbo_FC <- ((abs(Nlgn2Data$NL2_v_Turbo_FC))/Nlgn2Data$NL2_v_Turbo_FC) * log(abs(Nlgn2Data$NL2_v_Turbo_Pval), base = 2)
+rownames(Nlgn2Data) <- Nlgn2Data$Genes
+
+# Lamp1 data
 Lamp1Data <- read_excel("./tables/6116_SupplementalData_121922.xlsx", sheet = "Table 5 Lamp1_v_Cyto")
 keep <- !is.na(rownames(Lamp1Data))
 Lamp1Data <- Lamp1Data[keep,]
 Lamp1Data <- Lamp1Data[!(duplicated(Lamp1Data$Genes)) & !(is.na(Lamp1Data$Genes)),]
-Lamp1Data$log2_GS_EZR_v_GS_CYT_FC <- ((abs(Lamp1Data$GS_EZR_v_GS_CYT_FC))/Lamp1Data$GS_EZR_v_GS_CYT_FC) * log(abs(Lamp1Data$GS_EZR_v_GS_CYT_FC), base = 2)
-rownames(Lamp1Data) <- Lamp1Data$Symbol
-
-# VPS35 surface vs cyto data
-VPData <- read_excel("10287_SupplementalData__120723-AGEDSURFACE.xlsx", sheet = "Surface1_v_Cyto1")
-keep <- !is.na(rownames(VPData))
-VPData <- VPData[keep,]
-VPData <- VPData[!(duplicated(VPData$Genes)) & !(is.na(VPData$Genes)),]
-VPData$log2_Surface1_v_Cyto1_FC <- ((abs(VPData$Surface1_v_Cyto1_FC))/VPData$Surface1_v_Cyto1_FC) * log(abs(VPData$Surface1_v_Cyto1_FC), base = 2)
-rownames(VPData) <- VPData$Genes
-
-# Lamp1 data
-EZData <- read.csv("10003_Ezrin-BioID-Quant-WT-EZR-vs-GS-EZR_011923.csv")
-keep <- !is.na(rownames(EZData))
-EZData <- EZData[keep,]
-EZData <- EZData[!duplicated(EZData$Symbol), ]
-EZData <- EZData[!EZData$Symbol == '1 SV' & !EZData$Symbol == '2 SV' & !EZData$Symbol == 'Macf1', ]
-EZData$log2_GS_EZR_v_WT_EZR_FC <- ((abs(EZData$GS_EZR_v_WT_EZR_FC))/EZData$GS_EZR_v_WT_EZR_FC) * log(abs(EZData$GS_EZR_v_WT_EZR_FC), base = 2)
-rownames(EZData) <- EZData$Symbol
+Lamp1Data$log2_Lamp1_v_Cyto_FC <- ((abs(Lamp1Data$Lamp1_v_Cyto_FC))/Lamp1Data$Lamp1_v_Cyto_FC) * log(abs(Lamp1Data$Lamp1_v_Cyto_pval), base = 2)
+rownames(Lamp1Data) <- Lamp1Data$Genes
 
 # Split data
-CYTData <- read.csv("10003_Ezrin-BioID-Quant-GS-CYT-vs-WT-CYT_110623.csv")
-keep <- !is.na(rownames(CYTData))
-CYTData <- CYTData[keep,]
-CYTData <- CYTData[!duplicated(CYTData$Gene), ]
-str(CYTData)
-CYTData <- CYTData[!CYTData$Gene == '1 SV' & !CYTData$Gene == '2 SV' & !CYTData$Gene == 'Macf1', ]
-CYTData$log2_GS_CYT_v_WT_CYT_FC <- ((abs(CYTData$GS_CYT_v_WT_CYT_FC))/CYTData$GS_CYT_v_WT_CYT_FC) * log(abs(CYTData$GS_CYT_v_WT_CYT_FC), base = 2)
-rownames(CYTData) <- CYTData$Gene
+SplitData <- read_excel("./tables/Takano2020_Split-TurboID-Dataset_20221121.xlsx", sheet = "Split-TurboID")
+keep <- !is.na(rownames(SplitData))
+SplitData <- SplitData[keep,]
+SplitData <- SplitData[!(duplicated(SplitData$Symbol)) & !(is.na(SplitData$Symbol)),]
+SplitData$Split_v_Cyto_FC <- SplitData$`Fold enrichment` 
+SplitData$log2_Split_v_Cyto_FC <- ((abs(SplitData$Split_v_Cyto_FC))/SplitData$Split_v_Cyto_FC) * log(abs(SplitData$'p-value'), base = 2)
+rownames(SplitData) <- SplitData$Symbol
+SplitData$Genes <- SplitData$Symbol
+
+```
+
+```{r load heatmap data}
+
+# create matrix of per sample intensity data to feed into pheatmap() function
+# adjust this code depending on your needs
+library(tidyverse)
+
+#merge data frames
+heatmap_data <- list(EzrinData[c("Genes", "WT_EZR_v_WT_CYT_FC")], Nlgn2Data[c("Genes", "NL2_v_Turbo_FC")],  Lamp1Data[c("Genes", "Lamp1_v_Cyto_FC")], SplitData[c("Genes", "Split_v_Cyto_FC")])
+heatmap_data <- Reduce(function(x, y) merge(x, y, all=TRUE), heatmap_data)  
+
+#replace NAs with 0s
+heatmap_data[is.na(heatmap_data)] <- 0
+print(heatmap_data)
+
+rownames(heatmap_data) <- heatmap_data$Genes
+df_heatmap_samples <- as.data.frame(heatmap_data)
+
+```
+
+```{r cell-type marker genes from Soto et al., 2023 and/or from <https://www.abcam.com/neuroscience/neural-markers-guide>. Force undetected genes to 0}
+gabaa_subunits <- Nlgn2Data$Genes[grep("Gabr", Nlgn2Data$Genes)]
+gabaa_subunits <- append(gabaa_subunits, EzrinData$Genes[grep("Gabr", EzrinData$Genes)])
+gabaa_subunits <- append(gabaa_subunits, Lamp1Data$Genes[grep("Gabr", Lamp1Data$Genes)])
+gabaa_subunits <- gabaa_subunits[!duplicated(gabaa_subunits)]
+print(gabaa_subunits)
+
+
+#heatmap settings
+#myheatcol <- grDevices::colorRampPalette(c("lightblue", "white", "orange"))(256)
+annotation_row = data.frame(subunit_type = c("alpha", "alpha", "gamma", "alpha", "beta", "beta", "alpha", "delta", "beta"))
+rownames(annotation_row) <- gabaa_subunits
+
+toPlot_subunits <- as.data.frame(heatmap_data[heatmap_data$Genes %in% gabaa_subunits,])
+colnames(toPlot_subunits) <- c("Genes", "Ezrin", "Nlgn2", "Lamp1", "Split")
+rownames(toPlot_subunits) <- toPlot_subunits$Genes
+toPlot_subunits <- subset(toPlot_subunits, select = c(2:5))
+
+#set quantile break points <https://slowkow.com/notes/pheatmap-tutorial/>
+quantile_breaks <- function(xs, n = 100) {
+  breaks <- quantile(xs, probs = seq(0, 1, length.out = n))
+  breaks[!duplicated(breaks)]
+}
+
+range <- c(min(toPlot_subunits[c(1:4)]), max(toPlot_subunits[c(1:4)]))
+toPlot_subunits_breaks <- quantile_breaks(range, n = 101)
+
+#reorder by annotation
+toPlot_subunits_ordered <- toPlot_subunits[rownames(annotation_row), ]
+toPlot_subunits_ordered <- toPlot_subunits_ordered[!(grepl("NA", rownames(toPlot_subunits_ordered))), ]
+
+#plot heatmap
+heatmap_subunits <- pheatmap(as.matrix(t(toPlot_subunits_ordered)), 
+                             scale = "none", 
+                             fontsize_row = 10, 
+                             fontsize_col = 10, 
+                             color = viridis(length(toPlot_subunits_breaks)),
+                             #breaks = toPlot_subunits_breaks, 
+                             angle_col = 315, 
+                             main = "GABAAR subunits in astrocyte compartments", 
+                             #annotation_col = annotation_row, 
+                             cluster_cols = FALSE, cluster_rows = FALSE, 
+                             cellheight = 15, cellwidth = 15)
+
+heatmap_subunits
+
+ppi <- 300
+png(file = "./plots/heatmap_gabra_subunits.png", width = 11*ppi, height = 2*ppi, res = ppi)
+  heatmap_subunits
+dev.off()
+
 ```
 
 ```{r hit-lists}
