@@ -1,0 +1,120 @@
+---
+title: "gabra_subunit_analysis"
+output: html_document
+date: "2024-03-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Install biocmanager packages
+if(!require("BiocManager")){install.packages("BiocManager")}
+if(!require("clusterProfiler")){install.packages("clusterProfiler")}
+if(!require("AnnotationDbi")){install.packages("AnnotationDbi")}
+if(!require("org.Mm.eg.db")){install.packages("org.Mm.eg.db")}
+if(!require("readxl")){install.packages("readxl")}
+if(!require("gplots")){BiocManager::install("gplots")}
+if(!require("stringr")){BiocManager::install("stringr")}
+if(!require("enrichplot")){BiocManager::install("enrichplot")}
+if(!require("viridis")){BiocManager::install("viridis")}
+if(!require("ggplot2")){BiocManager::install("ggplot2")}
+if(!require("pheatmap")){BiocManager::install("pheatmap")}
+if(!require("RColorBrewer")){BiocManager::install("RColorBrewer")}
+if(!require("EnhancedVolcano")){BiocManager::install('EnhancedVolcano')}
+if(!require("xlsx")){BiocManager::install('xlsx')}
+
+# import libraries
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+library(readxl)
+library(gplots)
+library(ggupset)
+library(VennDiagram)
+library(stringr)
+library(viridis)
+library(enrichplot)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(EnhancedVolcano)
+library(xlsx)
+```
+
+```{r data}
+pcutoff = 0.05
+FCcutoff = 1.5
+
+# WT ezrin data
+WTData <- read.csv("10003_Ezrin-BioID-Quant-WT-CYTO-vs-EZR_011923.csv")
+keep <- !is.na(rownames(WTData))
+WTData <- WTData[keep,]
+WTData <- WTData[!WTData$Symbol == '2 SV' & !WTData$Symbol == '1 SV' & !WTData$Symbol == 'Macf1',]
+WTData$log2_WT_EZR_v_WT_CYT_FC <- ((abs(WTData$WT_EZR_v_WT_CYT_FC))/WTData$WT_EZR_v_WT_CYT_FC) * log(abs(WTData$WT_EZR_v_WT_CYT_FC), base = 2)
+rownames(WTData) <- WTData$Symbol
+
+# Astro Nlgn2 data
+Lamp1Data <- read_excel("./tables/6116_SupplementalData_121922.xlsx", sheet = "Table 5 Lamp1_v_Cyto")
+keep <- !is.na(rownames(Lamp1Data))
+Lamp1Data <- Lamp1Data[keep,]
+Lamp1Data <- Lamp1Data[!(duplicated(Lamp1Data$Genes)) & !(is.na(Lamp1Data$Genes)),]
+Lamp1Data$log2_GS_EZR_v_GS_CYT_FC <- ((abs(Lamp1Data$GS_EZR_v_GS_CYT_FC))/Lamp1Data$GS_EZR_v_GS_CYT_FC) * log(abs(Lamp1Data$GS_EZR_v_GS_CYT_FC), base = 2)
+rownames(Lamp1Data) <- Lamp1Data$Symbol
+
+# VPS35 surface vs cyto data
+VPData <- read_excel("10287_SupplementalData__120723-AGEDSURFACE.xlsx", sheet = "Surface1_v_Cyto1")
+keep <- !is.na(rownames(VPData))
+VPData <- VPData[keep,]
+VPData <- VPData[!(duplicated(VPData$Genes)) & !(is.na(VPData$Genes)),]
+VPData$log2_Surface1_v_Cyto1_FC <- ((abs(VPData$Surface1_v_Cyto1_FC))/VPData$Surface1_v_Cyto1_FC) * log(abs(VPData$Surface1_v_Cyto1_FC), base = 2)
+rownames(VPData) <- VPData$Genes
+
+# Lamp1 data
+EZData <- read.csv("10003_Ezrin-BioID-Quant-WT-EZR-vs-GS-EZR_011923.csv")
+keep <- !is.na(rownames(EZData))
+EZData <- EZData[keep,]
+EZData <- EZData[!duplicated(EZData$Symbol), ]
+EZData <- EZData[!EZData$Symbol == '1 SV' & !EZData$Symbol == '2 SV' & !EZData$Symbol == 'Macf1', ]
+EZData$log2_GS_EZR_v_WT_EZR_FC <- ((abs(EZData$GS_EZR_v_WT_EZR_FC))/EZData$GS_EZR_v_WT_EZR_FC) * log(abs(EZData$GS_EZR_v_WT_EZR_FC), base = 2)
+rownames(EZData) <- EZData$Symbol
+
+# Split data
+CYTData <- read.csv("10003_Ezrin-BioID-Quant-GS-CYT-vs-WT-CYT_110623.csv")
+keep <- !is.na(rownames(CYTData))
+CYTData <- CYTData[keep,]
+CYTData <- CYTData[!duplicated(CYTData$Gene), ]
+str(CYTData)
+CYTData <- CYTData[!CYTData$Gene == '1 SV' & !CYTData$Gene == '2 SV' & !CYTData$Gene == 'Macf1', ]
+CYTData$log2_GS_CYT_v_WT_CYT_FC <- ((abs(CYTData$GS_CYT_v_WT_CYT_FC))/CYTData$GS_CYT_v_WT_CYT_FC) * log(abs(CYTData$GS_CYT_v_WT_CYT_FC), base = 2)
+rownames(CYTData) <- CYTData$Gene
+```
+
+```{r hit-lists}
+# find hits >1.2 FC p < 0.05 between compartments
+hits_downreg_GS <- GSData[GSData$GS_EZR_v_GS_CYT_FC <= -FCcutoff  & GSData$GS_EZR_v_GS_CYT_pval <= pcutoff,]$Symbol
+hits_upreg_GS <- GSData[GSData$GS_EZR_v_GS_CYT_FC >= FCcutoff  & GSData$GS_EZR_v_GS_CYT_pval <= pcutoff,]$Symbol
+hits_downreg_WT <- WTData[WTData$WT_EZR_v_WT_CYT_FC <= FCcutoff  & WTData$WT_EZR_v_WT_CYT_pval <= pcutoff,]$Symbol
+hits_upreg_WT <- WTData[WTData$WT_EZR_v_WT_CYT_FC >= FCcutoff  & WTData$WT_EZR_v_WT_CYT_pval <= pcutoff,]$Symbol
+
+#export csv files for Cytoscape
+DEG_ezr_down <- data.frame(bait = "Ezrin",
+                           interaction = "iBioID",
+                           prey = hits_downreg_GSvsWT_EZR)
+write.xlsx(DEG_ezr_down, file = "./cytoscape/cytoscape_network_GS_EZR_vs_WT_EZR_down.xlsx")
+
+DEG_ezr_up <- data.frame(bait = "Ezrin",
+                           interaction = "iBioID",
+                           prey = hits_upreg_GSvsWT_EZR)
+write.xlsx(DEG_ezr_up, file = "./cytoscape/cytoscape_network_GS_EZR_vs_WT_EZR_up.xlsx")
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
