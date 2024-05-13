@@ -1,0 +1,384 @@
+---
+title: "gabra_subunit_analysis"
+output: html_document
+date: "2024-03-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Install biocmanager packages
+if(!require("BiocManager")){install.packages("BiocManager")}
+if(!require("clusterProfiler")){install.packages("clusterProfiler")}
+if(!require("AnnotationDbi")){install.packages("AnnotationDbi")}
+if(!require("org.Mm.eg.db")){install.packages("org.Mm.eg.db")}
+if(!require("readxl")){install.packages("readxl")}
+if(!require("gplots")){BiocManager::install("gplots")}
+if(!require("stringr")){BiocManager::install("stringr")}
+if(!require("enrichplot")){BiocManager::install("enrichplot")}
+if(!require("viridis")){BiocManager::install("viridis")}
+if(!require("ggplot2")){BiocManager::install("ggplot2")}
+if(!require("pheatmap")){BiocManager::install("pheatmap")}
+if(!require("RColorBrewer")){BiocManager::install("RColorBrewer")}
+if(!require("EnhancedVolcano")){BiocManager::install('EnhancedVolcano')}
+if(!require("xlsx")){BiocManager::install('xlsx')}
+if(!require("tidyverse")){BiocManager::install('tidyverse')}
+
+# import libraries
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+library(readxl)
+library(gplots)
+library(ggupset)
+library(VennDiagram)
+library(stringr)
+library(viridis)
+library(enrichplot)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(EnhancedVolcano)
+library(xlsx)
+library(tidyverse)
+```
+
+```{r data}
+pcutoff = 0.05
+FCcutoff = 1.5
+
+# WT ezrin data
+EzrinData <- read.csv("./tables/10003_Ezrin-BioID-Quant-WT-CYTO-vs-EZR_011923.csv")
+keep <- !is.na(rownames(Nlgn2Data))
+EzrinData <- EzrinData[keep,]
+EzrinData <- EzrinData[!(duplicated(EzrinData$Symbol)) & !(is.na(EzrinData$Symbol)),]
+EzrinData$log2_WT_EZR_v_WT_CYT_FC <- ((abs(EzrinData$WT_EZR_v_WT_CYT_FC))/EzrinData$WT_EZR_v_WT_CYT_FC) * log(abs(EzrinData$WT_EZR_v_WT_CYT_pval), base = 2)
+rownames(EzrinData) <- EzrinData$Symbol
+EzrinData$Genes <- EzrinData$Symbol
+
+# Astro Nlgn2 data
+Nlgn2Data <- read_excel("./tables/Neuroligin2_astrocyte_BioID_RawData.xlsx", sheet = "Table 4 NL2_v_Turbo")
+keep <- !is.na(rownames(Nlgn2Data))
+Nlgn2Data <- Nlgn2Data[keep,]
+Nlgn2Data <- Nlgn2Data[!(duplicated(Nlgn2Data$Genes)) & !(is.na(Nlgn2Data$Genes)),]
+Nlgn2Data$log2_NL2_v_Turbo_FC <- ((abs(Nlgn2Data$NL2_v_Turbo_FC))/Nlgn2Data$NL2_v_Turbo_FC) * log(abs(Nlgn2Data$NL2_v_Turbo_Pval), base = 2)
+rownames(Nlgn2Data) <- Nlgn2Data$Genes
+
+# Lamp1 data
+Lamp1Data <- read_excel("./tables/6116_SupplementalData_121922.xlsx", sheet = "Table 5 Lamp1_v_Cyto")
+keep <- !is.na(rownames(Lamp1Data))
+Lamp1Data <- Lamp1Data[keep,]
+Lamp1Data <- Lamp1Data[!(duplicated(Lamp1Data$Genes)) & !(is.na(Lamp1Data$Genes)),]
+Lamp1Data$log2_Lamp1_v_Cyto_FC <- ((abs(Lamp1Data$Lamp1_v_Cyto_FC))/Lamp1Data$Lamp1_v_Cyto_FC) * log(abs(Lamp1Data$Lamp1_v_Cyto_pval), base = 2)
+rownames(Lamp1Data) <- Lamp1Data$Genes
+
+# Split data
+SplitData <- read_excel("./tables/Takano2020_Split-TurboID-Dataset_20221121.xlsx", sheet = "Split-TurboID")
+keep <- !is.na(rownames(SplitData))
+SplitData <- SplitData[keep,]
+SplitData <- SplitData[!(duplicated(SplitData$Symbol)) & !(is.na(SplitData$Symbol)),]
+SplitData$Split_v_Cyto_FC <- SplitData$`Fold enrichment` 
+SplitData$log2_Split_v_Cyto_FC <- ((abs(SplitData$Split_v_Cyto_FC))/SplitData$Split_v_Cyto_FC) * log(abs(SplitData$'p-value'), base = 2)
+rownames(SplitData) <- SplitData$Symbol
+SplitData$Genes <- SplitData$Symbol
+
+```
+
+```{r load heatmap data}
+
+# create matrix of per sample intensity data to feed into pheatmap() function
+# adjust this code depending on your needs
+library(tidyverse)
+
+#merge data frames
+heatmap_data <- list(EzrinData[c("Genes", "WT_EZR_v_WT_CYT_FC")], Nlgn2Data[c("Genes", "NL2_v_Turbo_FC")],  Lamp1Data[c("Genes", "Lamp1_v_Cyto_FC")], SplitData[c("Genes", "Split_v_Cyto_FC")])
+heatmap_data <- Reduce(function(x, y) merge(x, y, all=TRUE), heatmap_data)  
+
+#replace NAs with 0s
+heatmap_data[is.na(heatmap_data)] <- 0
+print(heatmap_data)
+
+rownames(heatmap_data) <- heatmap_data$Genes
+df_heatmap_samples <- as.data.frame(heatmap_data)
+
+```
+
+```{r cell-type marker genes from Soto et al., 2023 and/or from <https://www.abcam.com/neuroscience/neural-markers-guide>. Force undetected genes to 0}
+gabaa_subunits <- Nlgn2Data$Genes[grep("Gabr", Nlgn2Data$Genes)]
+gabaa_subunits <- append(gabaa_subunits, EzrinData$Genes[grep("Gabr", EzrinData$Genes)])
+gabaa_subunits <- append(gabaa_subunits, Lamp1Data$Genes[grep("Gabr", Lamp1Data$Genes)])
+gabaa_subunits <- gabaa_subunits[!duplicated(gabaa_subunits)]
+print(gabaa_subunits)
+
+
+#heatmap settings
+#myheatcol <- grDevices::colorRampPalette(c("lightblue", "white", "orange"))(256)
+annotation_row = data.frame(subunit_type = c("alpha", "alpha", "gamma", "alpha", "beta", "beta", "alpha", "delta", "beta"))
+rownames(annotation_row) <- gabaa_subunits
+
+toPlot_subunits <- as.data.frame(heatmap_data[heatmap_data$Genes %in% gabaa_subunits,])
+colnames(toPlot_subunits) <- c("Genes", "Ezrin", "Nlgn2", "Lamp1", "Split")
+rownames(toPlot_subunits) <- toPlot_subunits$Genes
+toPlot_subunits <- subset(toPlot_subunits, select = c(2:5))
+
+#set quantile break points <https://slowkow.com/notes/pheatmap-tutorial/>
+quantile_breaks <- function(xs, n = 100) {
+  breaks <- quantile(xs, probs = seq(0, 1, length.out = n))
+  breaks[!duplicated(breaks)]
+}
+
+range <- c(min(toPlot_subunits[c(1:4)]), max(toPlot_subunits[c(1:4)]))
+toPlot_subunits_breaks <- quantile_breaks(range, n = 101)
+
+#reorder by annotation
+toPlot_subunits_ordered <- toPlot_subunits[rownames(annotation_row), ]
+toPlot_subunits_ordered <- toPlot_subunits_ordered[!(grepl("NA", rownames(toPlot_subunits_ordered))), ]
+
+#plot heatmap
+heatmap_subunits <- pheatmap(as.matrix(t(toPlot_subunits_ordered)), 
+                             scale = "none", 
+                             fontsize_row = 10, 
+                             fontsize_col = 10, 
+                             color = viridis(length(toPlot_subunits_breaks)),
+                             #breaks = toPlot_subunits_breaks, 
+                             angle_col = 315, 
+                             main = "GABAAR subunits in astrocyte compartments", 
+                             #annotation_col = annotation_row, 
+                             cluster_cols = FALSE, cluster_rows = FALSE, 
+                             cellheight = 15, cellwidth = 15)
+
+heatmap_subunits
+
+ppi <- 300
+png(file = "./plots/heatmap_gabra_subunits.png", width = 11*ppi, height = 2*ppi, res = ppi)
+  heatmap_subunits
+dev.off()
+
+```
+
+```{r}
+dotplot_data_ezrin <- data.frame(Genes = EzrinData$Genes, 
+                                    FC = EzrinData$WT_EZR_v_WT_CYT_FC, 
+                                    pval = EzrinData$WT_EZR_v_WT_CYT_pval, 
+                                    Sample = "Ezrin")
+dotplot_data_nlgn <- data.frame(Genes = Nlgn2Data$Genes, 
+                                    FC = Nlgn2Data$NL2_v_Turbo_FC, 
+                                    pval = Nlgn2Data$NL2_v_Turbo_Pval, 
+                                    Sample = "Nlgn2")
+dotplot_data_split <- data.frame(Genes = SplitData$Genes, 
+                                    FC = SplitData$Split_v_Cyto_FC, 
+                                    pval = SplitData$'p-value', 
+                                    Sample = "Split")
+dotplot_data <- rbind(dotplot_data_ezrin, dotplot_data_nlgn)
+dotplot_data <- rbind(dotplot_data, dotplot_data_split)
+
+#replace NAs with 0s
+#dotplot_data[is.na(dotplot_data)] <- 0
+
+toPlot_subunits <- as.data.frame(dotplot_data[dotplot_data$Genes %in% gabaa_subunits,])
+toPlot_subunits$Genes <- factor(toPlot_subunits$Genes, levels = c("Gabra3", "Gabrb2", "Gabra4",  "Gabrb3", "Gabrb1","Gabra2", "Gabrg2", "Gabra1"))
+#toPlot_subunits$Genes <- unique(toPlot_subunits$Genes)
+#levels(toPlot_subunits$Genes) <- c("Gabra1", "Gabrg2", "Gabra2", "Gabrb1", "Gabra4","Gabrb2", "Gabrb3", "Gabra3")
+print(toPlot_subunits)
+#rownames(toPlot_subunits) <- toPlot_subunits$Genes
+
+ggplot(toPlot_subunits, aes(x = Sample, y = Genes, size = FC, fill = pval)) +
+  geom_point(shape = 21, color = "black") +
+  scale_size_continuous(range = c(1, 15), breaks = c(0, 2, 4)) +  # Adjust the range for dot sizes
+  theme_minimal() +
+  labs(x = "Sample", y = "Genes") + 
+  scale_fill_continuous(breaks = c( 0.05, 0.2), 
+                        labels = c("0.05", "0.2"),
+                        low = "blue", high = "white") +
+  labs(x = "Sample", y = "Genes") +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 18))
+
+  
+  #geom_rect(aes(xmin = 2.5, xmax = 3.5, ymin = -Inf, ymax = Inf), fill = "lightyellow", alpha = 0.05) 
+  ggsave("./plots/dotplot_gabr_subunits.png", units = "px", width = 1800, height = 1500, dpi = 300, bg = "white")
+  #dev.off()
+```
+
+```{r ezrin protein abundance histograms}
+EzrinData$WT_EZR_AVG <- rowMeans(EzrinData[c(7:9)])
+
+
+# calculate cumulative probability of each subunit abundance
+EzrinData <- EzrinData %>% 
+  as_tibble() %>% 
+  mutate(
+    x = EzrinData$WT_EZR_AVG,
+    x_percentile = 100*cume_dist(x))
+
+# make dataframe for plotting vertical lines of all GABr subunits
+vlines <- data.frame(xint = log(EzrinData[EzrinData$Genes %in% gabaa_subunits,]$WT_EZR_AVG),
+                     x_percentile = EzrinData[EzrinData$Genes %in% gabaa_subunits,]$x_percentile,
+                     grp = EzrinData[EzrinData$Genes %in% gabaa_subunits,]$Genes)
+vlines$grp <- factor(vlines$grp, levels = c("Gabra1", "Gabra2", "Gabrb1", "Gabrg2", "Gabrb3"))
+
+vlines_reordered <- vlines %>%
+  arrange(grp)
+print(vlines)
+
+hist_EZR <- ggplot(data = EzrinData, aes(x = log(WT_EZR_AVG))) +
+  geom_density(fill = "blue", alpha = 0.2) +
+  geom_vline(data = vlines, aes(xintercept = xint, colour = grp), linetype = "dashed") +
+  ggtitle("Astrocyte-specific Ezrin probe")
+hist_EZR 
+ggsave(filename = "./plots/hist_EZR.png")
+
+EzrinData$WT_CYT_AVG <- rowMeans(EzrinData[c(10:12)])
+vlines <- data.frame(xint = c(log(EzrinData[EzrinData$Genes %in% gabaa_subunits,]$WT_CYT_AVG)),grp = EzrinData[EzrinData$Genes %in% gabaa_subunits,]$Genes)
+vlines$grp <- factor(vlines$grp, levels = c("Gabra1", "Gabra2", "Gabrb1", "Gabrg2", "Gabrb3"))
+vlines_reordered <- vlines %>%
+  arrange(grp)
+
+hist_CYT1 <- ggplot(data = EzrinData, aes(x = log(WT_CYT_AVG))) +
+  geom_density(fill = "blue", alpha = 0.2) +
+  geom_vline(data = vlines, aes(xintercept = xint, colour = grp), linetype = "dashed")+
+  ggtitle("Astrocyte-specific Cytosolic probe 1")
+  
+hist_CYT1
+ggsave(filename = "./plots/hist_CYT1.png")
+
+# Calculate ECDF values for log average
+ecdf_values <- ecdf(log(EzrinData$WT_EZR_AVG, 2))(log(EzrinData$WT_EZR_AVG, 2))
+
+# Add ECDF values to the data frame
+EzrinData$ecdf_values <- ecdf_values
+
+ecdf_ezr <- ggplot(EzrinData, aes(x = log(WT_EZR_AVG, 2), y = ecdf_values), label = Symbol) +
+  stat_ecdf(geom = "point") +
+  geom_text_repel(data = subset(EzrinData, Symbol %in% gabaa_subunits), aes(y = ecdf_values, label = Symbol),
+                  box.padding = 2, segment.size = 0.6, size = 10,
+                  segment.color = "red", direction = "both", force = 4) +
+    labs(title = "Ezrin iBioID ECDF", x = "log2(intensity.norm)", y = "ecdf values") +
+    theme(
+      plot.title = element_text(size=24, face="bold.italic", hjust = 0.5),
+      axis.title.x = element_text(size=20, face="bold"),
+      axis.title.y = element_text(size=20, face="bold")
+    )
+ecdf_ezr
+ggsave(filename = "./plots/ecdf_ezrin.png")
+#dev.off()
+```
+
+```{r Nlgn2 protein abundance histograms}
+Nlgn2Data$WT_NL2_AVG <- rowMeans(Nlgn2Data[c(14:16)])
+
+# calculate cumulative probability of each subunit abundance
+Nlgn2Data <- Nlgn2Data %>% 
+  as_tibble() %>% 
+  mutate(
+    x = Nlgn2Data$WT_NL2_AVG,
+    x_percentile = 100*cume_dist(x))
+
+# make dataframe for plotting vertical lines of all GABr subunits
+vlines <- data.frame(xint = log(Nlgn2Data[Nlgn2Data$Genes %in% gabaa_subunits,]$WT_NL2_AVG),
+                     x_percentile = Nlgn2Data[Nlgn2Data$Genes %in% gabaa_subunits,]$x_percentile,
+                     grp = Nlgn2Data[Nlgn2Data$Genes %in% gabaa_subunits,]$Genes)
+vlines$grp <- factor(vlines$grp, levels = c("Gabra1", "Gabra2", "Gabrb1", "Gabrg2", "Gabra4", "Gabrb2"))
+vlines_reordered <- vlines %>%
+  arrange(grp)
+print(vlines_reordered)
+
+hist_NL2 <- ggplot(data = Nlgn2Data, aes(x = log(WT_NL2_AVG))) +
+  geom_density(fill = "blue", alpha = 0.2) +
+  geom_vline(data = vlines, aes(xintercept = xint, colour = grp), linetype = "dashed") +
+  ggtitle("Astrocyte-specific Nlgn2 probe")
+hist_NL2
+ggsave(filename = "./plots/hist_NL2.png")
+
+Nlgn2Data$Cyto_AVG <- rowMeans(Nlgn2Data[c(17:19)])
+vlines <- data.frame(xint = c(log(Nlgn2Data[Nlgn2Data$Genes %in% gabaa_subunits,]$Cyto_AVG)),grp = Nlgn2Data[Nlgn2Data$Genes %in% gabaa_subunits,]$Genes)
+vlines$grp <- factor(vlines$grp, levels = c("Gabra1", "Gabra2", "Gabrb1", "Gabrg2", "Gabra4", "Gabrb2"))
+vlines_reordered <- vlines %>%
+  arrange(grp)
+
+hist_CYT2 <- ggplot(data = Nlgn2Data, aes(x = log(Cyto_AVG))) +
+  geom_density(fill = "blue", alpha = 0.2) +
+  geom_vline(data = vlines, aes(xintercept = xint, colour = grp), linetype = "dashed") +
+  ggtitle("Astrocyte-specific cytosolic probe 2")
+hist_CYT2
+ggsave(filename = "./plots/hist_CYT2.png")
+
+# Calculate ECDF values for log average
+ecdf_values <- ecdf(log(Nlgn2Data$WT_NL2_AVG, 2))(log(Nlgn2Data$WT_NL2_AVG, 2))
+
+# Add ECDF values to the data frame
+Nlgn2Data$ecdf_values <- ecdf_values
+
+ecdf_nlgn2 <- ggplot(Nlgn2Data, aes(x = log(WT_NL2_AVG, 2), y = ecdf_values), label = Genes) +
+  stat_ecdf(geom = "point") +
+  geom_text_repel(data = subset(Nlgn2Data, Genes %in% gabaa_subunits), aes(y = ecdf_values, label = Genes),
+                  box.padding = 2, segment.size = 0.6, size = 10,
+                  segment.color = "red", direction = "both", force = 4) +
+    labs(title = "Nlgn2 iBioID ECDF", x = "log2(intensity.norm)", y = "ecdf values") +
+    theme(
+      plot.title = element_text(size=24, face="bold.italic", hjust = 0.5),
+      axis.title.x = element_text(size=20, face="bold"),
+      axis.title.y = element_text(size=20, face="bold")
+    )
+ecdf_nlgn2
+ggsave(filename = "./plots/ecdf_nlgn2.png")
+
+```
+
+```{r Nlgn2 protein abundance histograms}
+SplitData$Split_AVG <- rowMeans(SplitData[c(9:11)])
+SplitData$Cyto_AVG <- rowMeans(SplitData[c(6:8)])
+
+hist_Split <- ggplot(data = SplitData, aes(x = log(Split_AVG))) +
+  geom_density() +
+  geom_vline(xintercept = log(SplitData[SplitData$Genes == "Gabra1",]$Split_AVG)) +
+  geom_vline(xintercept = log(SplitData[SplitData$Genes == "Gabra2",]$Split_AVG)) + 
+  geom_vline(xintercept = log(SplitData[SplitData$Genes == "Gabra4",]$Split_AVG)) +
+  #geom_vline(xintercept = log(SplitData[SplitData$Genes == "Gabrg1",]$Split_AVG)) +
+  geom_vline(xintercept = log(SplitData[SplitData$Genes == "Gabrg2",]$Split_AVG)) +
+  #geom_vline(xintercept = log(SplitData[SplitData$Genes == "Gabrd",]$Split_AVG)) +
+  geom_vline(xintercept = log(SplitData[SplitData$Genes == "Gabrb2",]$Split_AVG)) 
+  #geom_vline(xintercept = log(SplitData[SplitData$Genes == "Gabrb1",]$Split_AVG))
+hist_Split
+
+
+vlines <- data.frame(xint = c(log(SplitData[SplitData$Genes %in% gabaa_subunits,]$Cyto_AVG)),grp = SplitData[SplitData$Genes %in% gabaa_subunits,]$Genes)
+
+hist_CYT <- ggplot(data = SplitData, aes(x = log(Cyto_AVG))) +
+  geom_density(fill = "blue", alpha = 0.2) +
+  geom_vline(data = vlines, aes(xintercept = xint, colour = grp), linetype = "dashed")
+
+hist_CYT
+```
+
+```{r Lamp1 protein abundance histograms}
+Lamp1Data$WT_LAMP1_AVG <- rowMeans(Lamp1Data[c(7:9)])
+
+hist_Lamp1 <- ggplot(data = Lamp1Data, aes(x = log(WT_LAMP1_AVG))) +
+  geom_density() +
+  geom_vline(xintercept = log(Lamp1Data[Lamp1Data$Genes == "Gabra1",]$WT_LAMP1_AVG)) +
+  geom_vline(xintercept = log(Lamp1Data[Lamp1Data$Genes == "Gabra2",]$WT_LAMP1_AVG)) + 
+  geom_vline(xintercept = log(Lamp1Data[Lamp1Data$Genes == "Gabra4",]$WT_LAMP1_AVG)) +
+  #geom_vline(xintercept = log(Lamp1Data[Lamp1Data$Genes == "Gabrg1",]$WT_LAMP1_AVG)) +
+  geom_vline(xintercept = log(Lamp1Data[Lamp1Data$Genes == "Gabrg2",]$WT_LAMP1_AVG)) +
+  geom_vline(xintercept = log(Lamp1Data[Lamp1Data$Genes == "Gabrd",]$WT_LAMP1_AVG)) +
+  geom_vline(xintercept = log(Lamp1Data[Lamp1Data$Genes == "Gabrb2",]$WT_LAMP1_AVG))+
+  geom_vline(xintercept = log(Lamp1Data[Lamp1Data$Genes == "Gabrb1",]$WT_LAMP1_AVG))
+hist_Lamp1
+
+Lamp1Data$Cyto_AVG <- rowMeans(Lamp1Data[c(10:12)])
+
+vlines <- data.frame(xint = c(log(Lamp1Data[Lamp1Data$Genes %in% gabaa_subunits,]$Cyto_AVG)),grp = Lamp1Data[Lamp1Data$Genes %in% gabaa_subunits,]$Genes)
+
+hist_CYT <- ggplot(data = Lamp1Data, aes(x = log(Cyto_AVG))) +
+  geom_density(fill = "blue", alpha = 0.2) +
+  geom_vline(data = vlines, aes(xintercept = xint, colour = grp), linetype = "dashed")
+
+hist_CYT
+
+```
+
+```{session info}
+session.info()
+```
+
+
